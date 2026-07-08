@@ -1,0 +1,951 @@
+{
+  "name": "Swell Event — surf-trip automation (template)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Every 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        288
+      ],
+      "id": "d400df43-c7b5-4c55-99d7-d0bb38261c7f"
+    },
+    {
+      "parameters": {},
+      "name": "Run (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        448
+      ],
+      "id": "7ce88a1b-6a98-49f0-8a6d-93ecd0cc8980"
+    },
+    {
+      "parameters": {
+        "url": "https://r.jina.ai/https://services.surfline.com/kbyg/spots/forecasts/wave",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "spotId",
+              "value": "5842041f4e65fad6a7708b4b"
+            },
+            {
+              "name": "days",
+              "value": "3"
+            },
+            {
+              "name": "intervalHours",
+              "value": "6"
+            },
+            {
+              "name": "units[waveHeight]",
+              "value": "HI"
+            },
+            {
+              "name": "units[swellHeight]",
+              "value": "M"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Return-Format",
+              "value": "text"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Surfline Wave",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        368
+      ],
+      "id": "dc970514-93e4-43ca-b461-6aaae5fa8e16"
+    },
+    {
+      "parameters": {
+        "url": "https://r.jina.ai/https://services.surfline.com/kbyg/spots/forecasts/wind",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "spotId",
+              "value": "5842041f4e65fad6a7708b4b"
+            },
+            {
+              "name": "days",
+              "value": "3"
+            },
+            {
+              "name": "intervalHours",
+              "value": "6"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Return-Format",
+              "value": "text"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Surfline Wind",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        544,
+        368
+      ],
+      "id": "3d552231-15e6-4515-901e-8458c864aec1"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst MIN_SURF=5, MIN_ON_DAYS=3, FORCE_FIRE=false; // FORCE_FIRE=true to fire on camera anytime\nconst rows=$('Forecast').all().map(i=>i.json);\nconst TZ=8*3600;\nconst dShort=ts=>new Date((ts+TZ)*1000).toUTCString().slice(0,3);\nconst dISO=ts=>new Date((ts+TZ)*1000).toISOString().slice(0,10);\nconst days={}; let peak=null; const onISO=[];\nfor(const r of rows){\n  const on=r.surfMax>=MIN_SURF && r.offshore;\n  if(on){const k=dShort(r.ts);\n    if(!days[k]||r.surfMax>days[k].max) days[k]={max:r.surfMax,line:`${r.swH.toFixed(1)}m @ ${r.swP}s ${r.swDirC} (${Math.round(r.swD)}°)`};\n    const iso=dISO(r.ts); if(!onISO.includes(iso))onISO.push(iso);}\n  if(!peak||r.surfMax>peak.surfMax)peak=r;\n}\nconst swellOn=FORCE_FIRE||onISO.length>=MIN_ON_DAYS;\nconst swellLines=Object.entries(days).map(([k,v])=>`${k}: ${v.line}`).join('\\n');\nconst departDate=onISO[0]||dISO(rows[0].ts);\nconst rt=new Date((onISO[onISO.length-1]||departDate)+'T00:00:00Z'); rt.setUTCDate(rt.getUTCDate()+1);\nreturn [{json:{swellOn,departDate,returnDate:rt.toISOString().slice(0,10),swellLines,\n  peakMin:peak.surfMin,peakMax:peak.surfMax,peakHuman:peak.human,\n  windKts:peak.windKts,windDir:peak.windDir,onDays:onISO.length||3,\n  surfShort:\"https://da.gd/DU6oz\"}}];\n"
+      },
+      "name": "Evaluate swell",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        368
+      ],
+      "id": "7f6b7312-cc68-4191-9dd6-77697b603e99"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.swellOn }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Swell ON?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        992,
+        368
+      ],
+      "id": "21483e20-e738-4128-9d49-cc1b0221004c"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/johnvc~Google-Flights-Data-Scraper-Flight-and-Price-Search/run-sync-get-dataset-items?maxTotalChargeUsd=0.5&timeout=180&token=YOUR_APIFY_TOKEN",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n \"departure_id\":\"PER\",\"arrival_id\":\"DPS\",\n \"outbound_date\":\"{{ $('Evaluate swell').item.json.departDate }}\",\n \"return_date\":\"{{ $('Evaluate swell').item.json.returnDate }}\",\n \"adults\":1,\"currency\":\"AUD\",\"fetch_booking_options\":false,\"max_pages\":1,\"gl\":\"au\",\"hl\":\"en\"\n}",
+        "options": {
+          "timeout": 200000
+        }
+      },
+      "name": "Apify Flights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        368
+      ],
+      "id": "fba3d07e-6c1e-418c-bfd6-b616e9710989"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/tri_angle~airbnb-scraper/run-sync-get-dataset-items?maxTotalChargeUsd=0.75&timeout=180&token=YOUR_APIFY_TOKEN",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n \"locationQueries\":[\"Uluwatu Bali\"],\n \"checkIn\":\"{{ $('Evaluate swell').item.json.departDate }}\",\n \"checkOut\":\"{{ $('Evaluate swell').item.json.returnDate }}\",\n \"currency\":\"AUD\",\"adults\":4,\"maxResults\":12\n}",
+        "options": {
+          "timeout": 200000
+        }
+      },
+      "name": "Apify Villa",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1296,
+        368
+      ],
+      "id": "a1a13905-5489-4af0-8be5-c47fc634ea6d"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nlet fitem=$('Apify Flights').first().json; if(Array.isArray(fitem))fitem=fitem[0];\nconst flights=(fitem&&fitem.all_flights)||[];\nconst cf=flights.filter(x=>x.price).sort((a,b)=>a.price-b.price)[0]||{};\nconst direct=(cf.stops===0||cf.stops==='0')?', direct':'';\nconst flightLine=`from A$${cf.price} return (${cf.airlines||'?'}${direct})`;\nlet villas=$('Apify Villa').all().map(i=>i.json);\nif(villas.length===1&&Array.isArray(villas[0]))villas=villas[0];\nif(villas.length===1&&villas[0]&&Array.isArray(villas[0].data))villas=villas[0].data;\nfunction pn(it){const d=(((it.price||{}).breakDown||{}).basePrice||{}).description||'';const m=d.match(/x\\s*\\$?([\\d,.]+)/);return m?Math.round(parseFloat(m[1].replace(/,/g,''))):null;}\nconst vp=villas.map(v=>({pn:pn(v),url:(v.url||'').split('?')[0]})).filter(v=>v.pn).sort((a,b)=>a.pn-b.pn);\nconst cv=vp[0]||{};\nreturn [{json:{flightLine,villaPrice:cv.pn,villaUrl:cv.url||'https://www.airbnb.com'}}];\n"
+      },
+      "name": "Pick cheapest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        368
+      ],
+      "id": "378354d5-7e71-4b9e-aac6-1fc67a33902c"
+    },
+    {
+      "parameters": {
+        "url": "=https://da.gd/shorten?url={{ encodeURIComponent($('Pick cheapest').item.json.villaUrl) }}",
+        "options": {}
+      },
+      "name": "Shorten villa",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        368
+      ],
+      "id": "0316ed9f-5913-4cdb-b1f4-0654989ea99b"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst s=$('Evaluate swell').first().json, p=$('Pick cheapest').first().json;\nlet short=$('Shorten villa').first().json;\nshort=(typeof short==='string')?short:(short.data||short.body||'');\nif(!/^https:\\/\\/da\\.gd\\//.test(short)) short=p.villaUrl; // fallback to clean full url if v.gd errored\nconst message=`🌊🎉 SWELL EVENT — Uluwatu is about to PUMP\n\n📏 Surf: up to ${s.peakMin}-${s.peakMax}ft (${s.peakHuman})\n🧭 Wind: ${s.windKts}kts ${s.windDir}, OFFSHORE and clean\n📅 Firing ${s.onDays} days straight:\n\n${s.swellLines}\n\n✈️ Flights PER→DPS: ${p.flightLine}\n🏝️ Villa: A$${p.villaPrice}/night → ${short}\n\n📊 Forecast: ${s.surfShort}\n\n👇 Boys — you in?`;\nreturn [{json:{message}}];\n"
+      },
+      "name": "Build message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        368
+      ],
+      "id": "7f363b7c-50ba-4daa-8651-a0286f5f3863"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"chat_id\":YOUR_TELEGRAM_CHAT_ID,\"text\":{{ JSON.stringify($json.message) }},\"disable_web_page_preview\":true}",
+        "options": {}
+      },
+      "name": "Send message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1904,
+        368
+      ],
+      "id": "2dc334df-7cc1-40fa-9f13-de412f083f8f"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendPoll",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"chat_id\": YOUR_TELEGRAM_CHAT_ID, \"question\": \"🌊🎉 SWELL EVENT — lock it in?\", \"options\": [\"I'm in 🤙\", \"Can't make it 😔\"], \"is_anonymous\": false}",
+        "options": {}
+      },
+      "name": "Send poll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2048,
+        368
+      ],
+      "id": "03fb3a20-eb53-4eec-ada9-6d8ae52f88c8"
+    },
+    {
+      "parameters": {
+        "jsCode": "function load(name){const it=$(name).first().json;if(it&&it.data&&(Array.isArray(it.data.wave)||Array.isArray(it.data.wind)))return it;let raw=(typeof it==='string')?it:(typeof it.data==='string')?it.data:(typeof it.body==='string')?it.body:JSON.stringify(it);return JSON.parse(raw);}\nconst wave=load('Surfline Wave').data.wave, wind=load('Surfline Wind').data.wind;\nconst wb={}; for(const w of wind) wb[w.timestamp]=w;\nconst C=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];\nconst cd=d=>C[Math.round((d||0)/22.5)%16]; const TZ=8*3600;\nconst out=[];\nfor(const wv of wave){\n  const wd=wb[wv.timestamp]||{};\n  const prim=wv.swells.reduce((a,b)=>b.height>a.height?b:a);\n  const t=new Date((wv.timestamp+TZ)*1000);\n  const firing = wv.surf.max>=5 && wd.directionType==='Offshore';\n  out.push({json:{\n    time: t.toUTCString().slice(0,17),\n    surf: `${wv.surf.min}-${wv.surf.max}ft`,\n    swell: `${prim.height.toFixed(1)}m @ ${prim.period}s ${cd(prim.direction)}`,\n    wind: `${Math.round(wd.speed||0)}kts ${cd(wd.direction)} ${wd.directionType||''}`.trim(),\n    firing: firing ? '🔥' : '',\n    ts: wv.timestamp, surfMin: wv.surf.min, surfMax: wv.surf.max, human: wv.surf.humanRelation,\n    swH: prim.height, swP: prim.period, swD: prim.direction, swDirC: cd(prim.direction),\n    windKts: Math.round(wd.speed||0), windDir: cd(wd.direction), offshore: wd.directionType==='Offshore'\n  }});\n}\nreturn out;\n"
+      },
+      "name": "Forecast",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        368
+      ],
+      "id": "78413ab5-6ee6-469c-9dfd-699de5d99bc5"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.bland.ai/v1/calls",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "authorization",
+              "value": "YOUR_ORG_KEY"
+            },
+            {
+              "name": "User-Agent",
+              "value": "curl/8.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"phone_number\": \"+YOUR_PHONE\", \"task\": \"You are Aaron, a laid-back surfer from California with an American accent, booking a taxi in Bali. Wait for the person to greet you first. Only continue if a REAL human answers; if you reach voicemail or a machine, hang up immediately and leave NO message. Book a taxi from Ngurah Rai airport in Denpasar out to a villa near Uluwatu. Ask if the driver can please play 'Money for Nothing' by Dire Straits when you get in the car. IMPORTANT: before you end the call, read back the pickup time and clearly confirm the booking is locked in (get a clear yes). Keep it short and natural, don't over-talk.\", \"voice\": \"mason\", \"first_sentence\": \"Hey, how's it going? I'd like to book a taxi please.\", \"wait_for_greeting\": true, \"max_duration\": 3, \"answered_by_enabled\": true, \"voicemail_action\": \"hangup\", \"record\": false, \"metadata\": {\"job\": \"taxi\"}, \"analysis_schema\": {\"booking_confirmed\": \"boolean\", \"pickup_time\": \"string\", \"price_quoted\": \"string\", \"special_request_agreed\": \"boolean\", \"responder\": \"string\", \"outcome\": \"string\"}, \"webhook\": \"https://YOUR-INSTANCE.app.n8n.cloud/webhook/hellswell-call-confirm\", \"model\": \"turbo\", \"interruption_threshold\": 90}",
+        "options": {}
+      },
+      "name": "Call taxi (Bland)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3552,
+        368
+      ],
+      "id": "61f7bd98-262e-461a-a693-954cd4f01217"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.bland.ai/v1/calls",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "authorization",
+              "value": "YOUR_ORG_KEY"
+            },
+            {
+              "name": "User-Agent",
+              "value": "curl/8.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"phone_number\": \"+YOUR_PHONE\", \"task\": \"You are Aaron, a laid-back surfer from California with an American accent, ordering beers for delivery to your villa near Uluwatu, Bali. Wait for them to greet you first. Only continue with a real human; if voicemail or a machine, hang up immediately with no message. Order a slab (a case of 24) of cold Bintang beers delivered to the villa near Uluwatu. Ask roughly how long delivery will take and that they'll be cold. IMPORTANT: before ending, read back the order and the delivery time and confirm it's locked in (get a clear yes). Keep it short and natural.\", \"voice\": \"mason\", \"first_sentence\": \"Hey mate, I'd like to order some beers for delivery please.\", \"wait_for_greeting\": true, \"max_duration\": 3, \"answered_by_enabled\": true, \"voicemail_action\": \"hangup\", \"record\": false, \"metadata\": {\"job\": \"gojek\"}, \"analysis_schema\": {\"order_confirmed\": \"boolean\", \"delivery_time\": \"string\", \"item\": \"string\", \"price_quoted\": \"string\", \"outcome\": \"string\"}, \"webhook\": \"https://YOUR-INSTANCE.app.n8n.cloud/webhook/hellswell-call-confirm\", \"model\": \"turbo\", \"interruption_threshold\": 90}",
+        "options": {}
+      },
+      "name": "Call Gojek - Bintang (Bland)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3840,
+        368
+      ],
+      "id": "9a663ea4-5e0f-4efb-b796-a5f248cc0f82"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// In production this is driven by the Telegram poll_answer webhook (who tapped \"I'm in\").\n// For the shareable/demo workflow we proceed with the boys who opted in.\nreturn [{json:{optedIn:true, note:\"prod: Telegram poll_answer webhook supplies the opted-in crew\"}}];\n"
+      },
+      "name": "Opt-in (poll = yes)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2192,
+        368
+      ],
+      "id": "a3273acf-0d9e-4b5b-9988-0edce63190b3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.optedIn }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Boys in?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2352,
+        368
+      ],
+      "id": "f572b8a0-a0ea-4aee-8ad3-74945211f8e9"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Build the flight-options email from the Apify flights scrape (top 4 cheapest).\nlet fitem=$('Apify Flights').first().json; if(Array.isArray(fitem))fitem=fitem[0];\nconst flights=((fitem&&fitem.all_flights)||[]).filter(x=>x.price).sort((a,b)=>a.price-b.price).slice(0,4);\nconst s=$('Evaluate swell').first().json;\nconst rows=flights.length\n  ? flights.map((f,i)=>`${i+1}. A$${f.price} — ${f.airlines} (${(f.stops===0||f.stops==='0')?'direct':(f.stops||'?')+' stop'})`).join('\\n')\n  : \"(no live flights in pinned data)\";\nconst subject=`🌊 HELL SWELL — Bali flights to book (${s.departDate} → ${s.returnDate})`;\nconst message=`Uluwatu's firing. Flights PER→DPS for ${s.departDate} → ${s.returnDate}:\\n\\n${rows}\\n\\n`+\n  `Book one and the workflow takes over — it's now watching your inbox for the airline confirmation, then it tracks the flight and books the taxi + beers.`;\nreturn [{json:{subject,message,to:\"YOUR_EMAIL@example.com\"}}];\n"
+      },
+      "name": "Build flight options",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        368
+      ],
+      "id": "c5e52de5-ce83-40e9-9549-bbb91c462060"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "limit": 1,
+        "filters": {
+          "q": "newer_than:2d subject:(flight OR itinerary OR booking OR confirmation)"
+        }
+      },
+      "name": "Check inbox (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2944,
+        368
+      ],
+      "id": "02babd52-84d2-4e09-9fb9-5111a6802f70",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// In production: poll a flight-status API (AeroDataBox / AviationStack) for live ETA.\n// Mocked so we can demo the 'almost landed' trigger.\nreturn [{json:{flightNo:$json.flightNo, phase:\"En route\", minsToLanding:25}}];\n"
+      },
+      "name": "Live flight status (AeroDataBox)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3248,
+        368
+      ],
+      "id": "772aca4d-8367-46c8-9272-9b1d8a982f95"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.minsToLanding }}",
+              "rightValue": 30,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Landing in < 30 min?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3392,
+        368
+      ],
+      "id": "24cf8815-9e0a-4fb4-b51b-bc57852f39a5"
+    },
+    {
+      "parameters": {
+        "amount": 60
+      },
+      "name": "Wait 1 hour (then beers)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3696,
+        368
+      ],
+      "id": "00f7e531-12fc-417f-8e3e-eccdabe1fb4d"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.message }}",
+        "options": {}
+      },
+      "name": "Email me flight options",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2640,
+        368
+      ],
+      "id": "1add21f0-0d5c-44e2-904e-abe27f4590a3"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "name": "Wait 1h (poll inbox)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2800,
+        368
+      ],
+      "id": "3cd1499c-d032-4ef2-a65a-dda22e071d90"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3104,
+        368
+      ],
+      "id": "d3928e64-4ebb-4905-8747-5c9bc70ab056"
+    },
+    {
+      "parameters": {
+        "content": "## 1 · Watch the swell  🌊\nSurfline forecast every 6h — fires only when Uluwatu is 5ft+ & offshore for 3 days",
+        "height": 430,
+        "width": 900,
+        "color": 4
+      },
+      "name": "note-1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        208,
+        -320
+      ],
+      "id": "02ba792c-3838-49c4-8fb1-4560e99bc878"
+    },
+    {
+      "parameters": {
+        "content": "## 2 · Find flights + villa  🔎\nApify scrapes cheapest PER→DPS flights + best Uluwatu villa (hard-capped spend)",
+        "height": 430,
+        "width": 600,
+        "color": 5
+      },
+      "name": "note-2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -320
+      ],
+      "id": "ccd72a77-e8b1-49dc-9205-5f61a9926ffc"
+    },
+    {
+      "parameters": {
+        "content": "## 3 · Pitch the boys  📣\nBuilds the proposal + sends it to the group with a Yes/No poll",
+        "height": 430,
+        "width": 750,
+        "color": 6
+      },
+      "name": "note-3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1728,
+        -320
+      ],
+      "id": "55572024-d314-4405-8d55-9901a9d68e1a"
+    },
+    {
+      "parameters": {
+        "content": "## 4 · Book flights + confirm  ✈️\nEmails the flight options, then polls the inbox hourly until the airline confirmation lands",
+        "height": 430,
+        "width": 750,
+        "color": 3
+      },
+      "name": "note-4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2496,
+        -320
+      ],
+      "id": "3d1ebcdb-0e68-4c4e-b342-0202b0f72f54"
+    },
+    {
+      "parameters": {
+        "content": "## 5 · Land → taxi → beers  🍺\nTracks the flight; near landing the AI voice agent books the taxi, then 1h later orders the Bintangs",
+        "height": 430,
+        "width": 750,
+        "color": 7
+      },
+      "name": "note-5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3248,
+        -336
+      ],
+      "id": "341bd90c-07f9-429c-b7a6-05e36c6e2347"
+    }
+  ],
+  "connections": {
+    "Every 6h": {
+      "main": [
+        [
+          {
+            "node": "Surfline Wave",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run (manual)": {
+      "main": [
+        [
+          {
+            "node": "Surfline Wave",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Surfline Wave": {
+      "main": [
+        [
+          {
+            "node": "Surfline Wind",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Surfline Wind": {
+      "main": [
+        [
+          {
+            "node": "Forecast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate swell": {
+      "main": [
+        [
+          {
+            "node": "Swell ON?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Swell ON?": {
+      "main": [
+        [
+          {
+            "node": "Apify Flights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify Flights": {
+      "main": [
+        [
+          {
+            "node": "Apify Villa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify Villa": {
+      "main": [
+        [
+          {
+            "node": "Pick cheapest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick cheapest": {
+      "main": [
+        [
+          {
+            "node": "Shorten villa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shorten villa": {
+      "main": [
+        [
+          {
+            "node": "Build message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build message": {
+      "main": [
+        [
+          {
+            "node": "Send message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message": {
+      "main": [
+        [
+          {
+            "node": "Send poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Forecast": {
+      "main": [
+        [
+          {
+            "node": "Evaluate swell",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send poll": {
+      "main": [
+        [
+          {
+            "node": "Opt-in (poll = yes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call taxi (Bland)": {
+      "main": [
+        [
+          {
+            "node": "Wait 1 hour (then beers)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opt-in (poll = yes)": {
+      "main": [
+        [
+          {
+            "node": "Boys in?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Boys in?": {
+      "main": [
+        [
+          {
+            "node": "Build flight options",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Book flights (browser agent)": {
+      "main": [
+        [
+          {
+            "node": "Check inbox: flight confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check inbox: flight confirmed": {
+      "main": [
+        [
+          {
+            "node": "Live flight status (AeroDataBox)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live flight status (AeroDataBox)": {
+      "main": [
+        [
+          {
+            "node": "Landing in < 30 min?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Landing in < 30 min?": {
+      "main": [
+        [
+          {
+            "node": "Call taxi (Bland)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Wait 1 hour (then beers)": {
+      "main": [
+        [
+          {
+            "node": "Call Gojek - Bintang (Bland)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build flight options": {
+      "main": [
+        [
+          {
+            "node": "Email me flight options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email me flight options": {
+      "main": [
+        [
+          {
+            "node": "Wait 1h (poll inbox)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1h (poll inbox)": {
+      "main": [
+        [
+          {
+            "node": "Check inbox (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check inbox (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Live flight status (AeroDataBox)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 1h (poll inbox)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
