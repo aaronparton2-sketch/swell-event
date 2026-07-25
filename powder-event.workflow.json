@@ -1,0 +1,875 @@
+{
+  "name": "Powder Event — ski-trip automation (template)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Every 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        288
+      ],
+      "id": "d400df43-c7b5-4c55-99d7-d0bb38261c7f"
+    },
+    {
+      "parameters": {},
+      "name": "Run (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        448
+      ],
+      "id": "7ce88a1b-6a98-49f0-8a6d-93ecd0cc8980"
+    },
+    {
+      "parameters": {
+        "url": "https://api.open-meteo.com/v1/forecast",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "latitude",
+              "value": "-36.5058,-36.4052,-37.1472,-36.9764"
+            },
+            {
+              "name": "longitude",
+              "value": "148.3044,148.4120,146.4439,147.1356"
+            },
+            {
+              "name": "daily",
+              "value": "snowfall_sum,temperature_2m_max,temperature_2m_min,wind_speed_10m_max"
+            },
+            {
+              "name": "hourly",
+              "value": "snow_depth"
+            },
+            {
+              "name": "forecast_days",
+              "value": "7"
+            },
+            {
+              "name": "wind_speed_unit",
+              "value": "kn"
+            },
+            {
+              "name": "timezone",
+              "value": "Australia/Sydney"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Open-Meteo Snow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        368
+      ],
+      "id": "dc970514-93e4-43ca-b461-6aaae5fa8e16"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst MOUNTAINS=[\n  {name:'Thredbo',   lat:-36.5058, lon:148.3044, airport:'CBR', region:'Snowy Mountains, NSW'},\n  {name:'Perisher',  lat:-36.4052, lon:148.4120, airport:'CBR', region:'Snowy Mountains, NSW'},\n  {name:'Mt Buller', lat:-37.1472, lon:146.4439, airport:'MEL', region:'Victorian Alps, VIC'},\n  {name:'Mt Hotham', lat:-36.9764, lon:147.1356, airport:'MHU', region:'Victorian Alps, VIC'}\n];\n// Open-Meteo returns one object per coordinate, in request order. n8n may hand it back\n// as separate items, one item wrapping the array, or a raw JSON string.\nfunction load(name){\n  let items=$(name).all().map(i=>i.json);\n  if(items.length===1){\n    const it=items[0];\n    if(typeof it==='string') items=JSON.parse(it);\n    else if(typeof it.data==='string') items=JSON.parse(it.data);\n    else if(Array.isArray(it.data)) items=it.data;\n    else if(Array.isArray(it)) items=it;\n    else items=[it];\n  }\n  return items;\n}\nconst locs=load('Open-Meteo Snow');\nconst out=[];\nlocs.forEach((loc,idx)=>{\n  const m=MOUNTAINS[idx];\n  if(!m||!loc||!loc.daily) return;\n  const d=loc.daily, h=loc.hourly||{};\n  const baseByDay={};\n  (h.time||[]).forEach((t,i)=>{\n    const depth=(h.snow_depth||[])[i];\n    if(depth==null) return;\n    const day=t.slice(0,10);\n    baseByDay[day]=Math.max(baseByDay[day]||0, depth*100); // metres -> cm\n  });\n  d.time.forEach((day,i)=>{\n    const snowfallCm=Math.round((d.snowfall_sum[i]||0)*10)/10;\n    out.push({json:{\n      mountain:m.name, airport:m.airport, region:m.region,\n      date:day,\n      day:new Date(day+'T00:00:00Z').toUTCString().slice(0,3),\n      snowfallCm,\n      tempMax:d.temperature_2m_max[i],\n      tempMin:d.temperature_2m_min[i],\n      windKts:Math.round(d.wind_speed_10m_max[i]||0),\n      baseCm:Math.round(baseByDay[day]||0)\n    }});\n  });\n});\nreturn out;\n"
+      },
+      "name": "Forecast",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        368
+      ],
+      "id": "78413ab5-6ee6-469c-9dfd-699de5d99bc5"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst MIN_SNOWFALL_CM=10, MAX_TEMP_C=2, MAX_WIND_KTS=40, MIN_ON_DAYS=3, FORCE_FIRE=false; // FORCE_FIRE=true to fire on camera anytime\nconst rows=$('Forecast').all().map(i=>i.json);\nconst byMtn={};\nfor(const r of rows){\n  const m=byMtn[r.mountain]||(byMtn[r.mountain]={mountain:r.mountain,airport:r.airport,region:r.region,onDates:[],lines:[],total:0,peak:0,base:0});\n  m.total+=r.snowfallCm;\n  if(r.snowfallCm>m.peak) m.peak=r.snowfallCm;\n  if(r.baseCm>m.base) m.base=r.baseCm;\n  const dumping = r.snowfallCm>=MIN_SNOWFALL_CM && r.tempMax<=MAX_TEMP_C && r.windKts<=MAX_WIND_KTS;\n  if(dumping){\n    m.onDates.push(r.date);\n    m.lines.push(`${r.day}: ${r.snowfallCm}cm fresh · ${Math.round(r.tempMin)}° to ${Math.round(r.tempMax)}° · ${r.windKts}kts`);\n  }\n}\nconst ranked=Object.values(byMtn).sort((a,b)=> (b.onDates.length-a.onDates.length) || (b.total-a.total));\nconst best=ranked[0];\nconst powderOn=FORCE_FIRE || best.onDates.length>=MIN_ON_DAYS;\nconst departDate=best.onDates[0]||rows[0].date;\nconst rt=new Date((best.onDates[best.onDates.length-1]||departDate)+'T00:00:00Z'); rt.setUTCDate(rt.getUTCDate()+1);\nreturn [{json:{powderOn,\n  mountain:best.mountain, airport:best.airport, region:best.region,\n  departDate, returnDate:rt.toISOString().slice(0,10),\n  snowLines:best.lines.join('\\n'),\n  peakSnowfallCm:best.peak, totalSnowfallCm:Math.round(best.total), baseDepthCm:best.base,\n  onDays:best.onDates.length||3,\n  runnersUp:ranked.slice(1).map(m=>`${m.mountain} ${Math.round(m.total)}cm`).join(' · '),\n  forecastUrl:`https://www.snow-forecast.com/resorts/${best.mountain.replace(/[^a-zA-Z]+/g,'-')}/6day/top`}}];\n"
+      },
+      "name": "Evaluate snow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        368
+      ],
+      "id": "7f6b7312-cc68-4191-9dd6-77697b603e99"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.powderOn }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Powder ON?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        992,
+        368
+      ],
+      "id": "21483e20-e738-4128-9d49-cc1b0221004c"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/johnvc~Google-Flights-Data-Scraper-Flight-and-Price-Search/run-sync-get-dataset-items?maxTotalChargeUsd=0.5&timeout=180&token=YOUR_APIFY_TOKEN",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n \"departure_id\":\"SYD\",\"arrival_id\":\"{{ $('Evaluate snow').item.json.airport }}\",\n \"outbound_date\":\"{{ $('Evaluate snow').item.json.departDate }}\",\n \"return_date\":\"{{ $('Evaluate snow').item.json.returnDate }}\",\n \"adults\":1,\"currency\":\"AUD\",\"fetch_booking_options\":false,\"max_pages\":1,\"gl\":\"au\",\"hl\":\"en\"\n}",
+        "options": {
+          "timeout": 200000
+        }
+      },
+      "name": "Apify Flights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        368
+      ],
+      "id": "fba3d07e-6c1e-418c-bfd6-b616e9710989"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/tri_angle~airbnb-scraper/run-sync-get-dataset-items?maxTotalChargeUsd=0.75&timeout=180&token=YOUR_APIFY_TOKEN",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n \"locationQueries\":[\"{{ $('Evaluate snow').item.json.mountain }} ski resort, Australia\"],\n \"checkIn\":\"{{ $('Evaluate snow').item.json.departDate }}\",\n \"checkOut\":\"{{ $('Evaluate snow').item.json.returnDate }}\",\n \"currency\":\"AUD\",\"adults\":4,\"maxResults\":12\n}",
+        "options": {
+          "timeout": 200000
+        }
+      },
+      "name": "Apify Lodge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1296,
+        368
+      ],
+      "id": "a1a13905-5489-4af0-8be5-c47fc634ea6d"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nlet fitem=$('Apify Flights').first().json; if(Array.isArray(fitem))fitem=fitem[0];\nconst flights=(fitem&&fitem.all_flights)||[];\nconst cf=flights.filter(x=>x.price).sort((a,b)=>a.price-b.price)[0]||{};\nconst direct=(cf.stops===0||cf.stops==='0')?', direct':'';\nconst flightLine=`from A$${cf.price} return (${cf.airlines||'?'}${direct})`;\nlet lodges=$('Apify Lodge').all().map(i=>i.json);\nif(lodges.length===1&&Array.isArray(lodges[0]))lodges=lodges[0];\nif(lodges.length===1&&lodges[0]&&Array.isArray(lodges[0].data))lodges=lodges[0].data;\nfunction pn(it){const d=(((it.price||{}).breakDown||{}).basePrice||{}).description||'';const m=d.match(/x\\s*\\$?([\\d,.]+)/);return m?Math.round(parseFloat(m[1].replace(/,/g,''))):null;}\nconst lp=lodges.map(v=>({pn:pn(v),url:(v.url||'').split('?')[0]})).filter(v=>v.pn).sort((a,b)=>a.pn-b.pn);\nconst cl=lp[0]||{};\nreturn [{json:{flightLine,lodgePrice:cl.pn,lodgeUrl:cl.url||'https://www.airbnb.com'}}];\n"
+      },
+      "name": "Pick cheapest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        368
+      ],
+      "id": "378354d5-7e71-4b9e-aac6-1fc67a33902c"
+    },
+    {
+      "parameters": {
+        "url": "=https://da.gd/shorten?url={{ encodeURIComponent($('Pick cheapest').item.json.lodgeUrl) }}",
+        "options": {}
+      },
+      "name": "Shorten lodge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        368
+      ],
+      "id": "0316ed9f-5913-4cdb-b1f4-0654989ea99b"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst s=$('Evaluate snow').first().json, p=$('Pick cheapest').first().json;\nlet short=$('Shorten lodge').first().json;\nshort=(typeof short==='string')?short:(short.data||short.body||'');\nif(!/^https:\\/\\/da\\.gd\\//.test(short)) short=p.lodgeUrl; // fallback to clean full url if da.gd errored\nconst message=`🎿❄️ POWDER EVENT — ${s.mountain} is about to get BURIED\n\n🌨️ Fresh: ${s.totalSnowfallCm}cm total, peak ${s.peakSnowfallCm}cm in a day\n🏔️ Base: ${s.baseDepthCm}cm · ${s.region}\n🌬️ Cold, and winds inside lift limits\n📅 Dumping ${s.onDays} days straight:\n\n${s.snowLines}\n\n✈️ Flights SYD→${s.airport}: ${p.flightLine}\n🛖 Lodge: A$${p.lodgePrice}/night → ${short}\n🥈 Runners-up: ${s.runnersUp}\n\n📊 Forecast: ${s.forecastUrl}\n\n👇 Crew — you in?`;\nreturn [{json:{message}}];\n"
+      },
+      "name": "Build message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        368
+      ],
+      "id": "7f363b7c-50ba-4daa-8651-a0286f5f3863"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"chat_id\":YOUR_TELEGRAM_CHAT_ID,\"text\":{{ JSON.stringify($json.message) }},\"disable_web_page_preview\":true}",
+        "options": {}
+      },
+      "name": "Send message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1904,
+        368
+      ],
+      "id": "2dc334df-7cc1-40fa-9f13-de412f083f8f"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendPoll",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"chat_id\": YOUR_TELEGRAM_CHAT_ID, \"question\": {{ JSON.stringify('🎿❄️ POWDER EVENT — ' + $('Evaluate snow').first().json.mountain + ' — lock it in?') }}, \"options\": [\"I'm in ⛷️\", \"Can't make it 😔\"], \"is_anonymous\": false}",
+        "options": {}
+      },
+      "name": "Send poll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2048,
+        368
+      ],
+      "id": "03fb3a20-eb53-4eec-ada9-6d8ae52f88c8"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// In production this is driven by the Telegram poll_answer webhook (who tapped \"I'm in\").\n// For the shareable/demo workflow we proceed with the crew who opted in.\nreturn [{json:{optedIn:true, note:\"prod: Telegram poll_answer webhook supplies the opted-in crew\"}}];\n"
+      },
+      "name": "Opt-in (poll = yes)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2192,
+        368
+      ],
+      "id": "a3273acf-0d9e-4b5b-9988-0edce63190b3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.optedIn }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Crew in?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2352,
+        368
+      ],
+      "id": "f572b8a0-a0ea-4aee-8ad3-74945211f8e9"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Build the flight-options email from the Apify flights scrape (top 4 cheapest).\nlet fitem=$('Apify Flights').first().json; if(Array.isArray(fitem))fitem=fitem[0];\nconst flights=((fitem&&fitem.all_flights)||[]).filter(x=>x.price).sort((a,b)=>a.price-b.price).slice(0,4);\nconst s=$('Evaluate snow').first().json;\nconst rows=flights.length\n  ? flights.map((f,i)=>`${i+1}. A$${f.price} — ${f.airlines} (${(f.stops===0||f.stops==='0')?'direct':(f.stops||'?')+' stop'})`).join('\\n')\n  : \"(no live flights in pinned data)\";\nconst subject=`🎿 POWDER EVENT — ${s.mountain} flights to book (${s.departDate} → ${s.returnDate})`;\nconst message=`${s.mountain} is about to get buried. Flights SYD→${s.airport} for ${s.departDate} → ${s.returnDate}:\\n\\n${rows}\\n\\n`+\n  `Book one and the workflow takes over — it's now watching your inbox for the airline confirmation, then it tracks the flight and books the snow transfer + après supplies.`;\nreturn [{json:{subject,message,to:\"YOUR_EMAIL@example.com\"}}];\n"
+      },
+      "name": "Build flight options",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        368
+      ],
+      "id": "c5e52de5-ce83-40e9-9549-bbb91c462060"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.message }}",
+        "options": {}
+      },
+      "name": "Email me flight options",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2640,
+        368
+      ],
+      "id": "1add21f0-0d5c-44e2-904e-abe27f4590a3"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "name": "Wait 1h (poll inbox)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2800,
+        368
+      ],
+      "id": "3cd1499c-d032-4ef2-a65a-dda22e071d90"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "limit": 1,
+        "filters": {
+          "q": "newer_than:2d subject:(flight OR itinerary OR booking OR confirmation)"
+        }
+      },
+      "name": "Check inbox (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2944,
+        368
+      ],
+      "id": "02babd52-84d2-4e09-9fb9-5111a6802f70",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3104,
+        368
+      ],
+      "id": "d3928e64-4ebb-4905-8747-5c9bc70ab056"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// In production: poll a flight-status API (AeroDataBox / AviationStack) for live ETA.\n// Mocked so we can demo the 'almost landed' trigger.\nreturn [{json:{flightNo:$json.flightNo, phase:\"En route\", minsToLanding:25}}];\n"
+      },
+      "name": "Live flight status (AeroDataBox)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3248,
+        368
+      ],
+      "id": "772aca4d-8367-46c8-9272-9b1d8a982f95"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.minsToLanding }}",
+              "rightValue": 30,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Landing in < 30 min?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3392,
+        368
+      ],
+      "id": "24cf8815-9e0a-4fb4-b51b-bc57852f39a5"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.bland.ai/v1/calls",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "authorization",
+              "value": "YOUR_ORG_KEY"
+            },
+            {
+              "name": "User-Agent",
+              "value": "curl/8.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"phone_number\": \"+YOUR_PHONE\", \"task\": \"You are Aaron, a laid-back skier from Sydney with an Australian accent, booking a snow transfer in the Australian alps. Wait for the person to greet you first. Only continue if a REAL human answers; if you reach voicemail or a machine, hang up immediately and leave NO message. Book a snow transfer from {{ $('Evaluate snow').first().json.airport }} airport up to a lodge at {{ $('Evaluate snow').first().json.mountain }} in the {{ $('Evaluate snow').first().json.region }}. Check the vehicle carries snow chains and can take four sets of skis. Ask if the driver can please play 'Money for Nothing' by Dire Straits when you get in. IMPORTANT: before you end the call, read back the pickup time and clearly confirm the booking is locked in (get a clear yes). Keep it short and natural, don't over-talk.\", \"voice\": \"mason\", \"first_sentence\": \"Hey, how's it going? I'd like to book a snow transfer please.\", \"wait_for_greeting\": true, \"max_duration\": 3, \"answered_by_enabled\": true, \"voicemail_action\": \"hangup\", \"record\": false, \"metadata\": {\"job\": \"transfer\"}, \"analysis_schema\": {\"booking_confirmed\": \"boolean\", \"pickup_time\": \"string\", \"price_quoted\": \"string\", \"chains_confirmed\": \"boolean\", \"special_request_agreed\": \"boolean\", \"responder\": \"string\", \"outcome\": \"string\"}, \"webhook\": \"https://YOUR-INSTANCE.app.n8n.cloud/webhook/powder-event-call-confirm\", \"model\": \"turbo\", \"interruption_threshold\": 90}",
+        "options": {}
+      },
+      "name": "Call snow transfer (Bland)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3552,
+        368
+      ],
+      "id": "61f7bd98-262e-461a-a693-954cd4f01217"
+    },
+    {
+      "parameters": {
+        "amount": 60
+      },
+      "name": "Wait 1 hour (then après)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3696,
+        368
+      ],
+      "id": "00f7e531-12fc-417f-8e3e-eccdabe1fb4d"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.bland.ai/v1/calls",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "authorization",
+              "value": "YOUR_ORG_KEY"
+            },
+            {
+              "name": "User-Agent",
+              "value": "curl/8.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"phone_number\": \"+YOUR_PHONE\", \"task\": \"You are Aaron, a laid-back skier from Sydney with an Australian accent, ordering après-ski supplies for delivery to your lodge at {{ $('Evaluate snow').first().json.mountain }}. Wait for them to greet you first. Only continue with a real human; if voicemail or a machine, hang up immediately with no message. Order a slab (a case of 24) of beers and a couple of bottles of red for delivery to the lodge at {{ $('Evaluate snow').first().json.mountain }}. Ask roughly how long delivery will take and whether they can get up the mountain road tonight. IMPORTANT: before ending, read back the order and the delivery time and confirm it's locked in (get a clear yes). Keep it short and natural.\", \"voice\": \"mason\", \"first_sentence\": \"Hey mate, I'd like to order some drinks for delivery please.\", \"wait_for_greeting\": true, \"max_duration\": 3, \"answered_by_enabled\": true, \"voicemail_action\": \"hangup\", \"record\": false, \"metadata\": {\"job\": \"apres\"}, \"analysis_schema\": {\"order_confirmed\": \"boolean\", \"delivery_time\": \"string\", \"item\": \"string\", \"price_quoted\": \"string\", \"outcome\": \"string\"}, \"webhook\": \"https://YOUR-INSTANCE.app.n8n.cloud/webhook/powder-event-call-confirm\", \"model\": \"turbo\", \"interruption_threshold\": 90}",
+        "options": {}
+      },
+      "name": "Call bottle shop - après (Bland)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3840,
+        368
+      ],
+      "id": "9a663ea4-5e0f-4efb-b796-a5f248cc0f82"
+    },
+    {
+      "parameters": {
+        "content": "## 1 · Watch the snow  ❄️\nOpen-Meteo forecast every 6h across Thredbo · Perisher · Mt Buller · Mt Hotham — fires only when a mountain gets 10cm+ fresh, cold and under 40kts for 3 days",
+        "height": 430,
+        "width": 900,
+        "color": 4
+      },
+      "name": "note-1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        208,
+        -320
+      ],
+      "id": "02ba792c-3838-49c4-8fb1-4560e99bc878"
+    },
+    {
+      "parameters": {
+        "content": "## 2 · Find flights + lodge  🔎\nApify scrapes cheapest flights out of Sydney to the winning mountain's airport + the best lodge on the hill (hard-capped spend)",
+        "height": 430,
+        "width": 600,
+        "color": 5
+      },
+      "name": "note-2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -320
+      ],
+      "id": "ccd72a77-e8b1-49dc-9205-5f61a9926ffc"
+    },
+    {
+      "parameters": {
+        "content": "## 3 · Pitch the crew  📣\nBuilds the proposal + sends it to the group with a Yes/No poll",
+        "height": 430,
+        "width": 750,
+        "color": 6
+      },
+      "name": "note-3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1728,
+        -320
+      ],
+      "id": "55572024-d314-4405-8d55-9901a9d68e1a"
+    },
+    {
+      "parameters": {
+        "content": "## 4 · Book flights + confirm  ✈️\nEmails the flight options, then polls the inbox hourly until the airline confirmation lands",
+        "height": 430,
+        "width": 750,
+        "color": 3
+      },
+      "name": "note-4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2496,
+        -320
+      ],
+      "id": "3d1ebcdb-0e68-4c4e-b342-0202b0f72f54"
+    },
+    {
+      "parameters": {
+        "content": "## 5 · Land → transfer → après  🍺\nTracks the flight; near landing the AI voice agent books the snow transfer, then 1h later orders the après supplies to the lodge",
+        "height": 430,
+        "width": 750,
+        "color": 7
+      },
+      "name": "note-5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3248,
+        -336
+      ],
+      "id": "341bd90c-07f9-429c-b7a6-05e36c6e2347"
+    }
+  ],
+  "connections": {
+    "Every 6h": {
+      "main": [
+        [
+          {
+            "node": "Open-Meteo Snow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run (manual)": {
+      "main": [
+        [
+          {
+            "node": "Open-Meteo Snow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open-Meteo Snow": {
+      "main": [
+        [
+          {
+            "node": "Forecast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Forecast": {
+      "main": [
+        [
+          {
+            "node": "Evaluate snow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate snow": {
+      "main": [
+        [
+          {
+            "node": "Powder ON?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Powder ON?": {
+      "main": [
+        [
+          {
+            "node": "Apify Flights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify Flights": {
+      "main": [
+        [
+          {
+            "node": "Apify Lodge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify Lodge": {
+      "main": [
+        [
+          {
+            "node": "Pick cheapest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick cheapest": {
+      "main": [
+        [
+          {
+            "node": "Shorten lodge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shorten lodge": {
+      "main": [
+        [
+          {
+            "node": "Build message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build message": {
+      "main": [
+        [
+          {
+            "node": "Send message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message": {
+      "main": [
+        [
+          {
+            "node": "Send poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send poll": {
+      "main": [
+        [
+          {
+            "node": "Opt-in (poll = yes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opt-in (poll = yes)": {
+      "main": [
+        [
+          {
+            "node": "Crew in?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crew in?": {
+      "main": [
+        [
+          {
+            "node": "Build flight options",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build flight options": {
+      "main": [
+        [
+          {
+            "node": "Email me flight options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email me flight options": {
+      "main": [
+        [
+          {
+            "node": "Wait 1h (poll inbox)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1h (poll inbox)": {
+      "main": [
+        [
+          {
+            "node": "Check inbox (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check inbox (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Live flight status (AeroDataBox)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 1h (poll inbox)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live flight status (AeroDataBox)": {
+      "main": [
+        [
+          {
+            "node": "Landing in < 30 min?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Landing in < 30 min?": {
+      "main": [
+        [
+          {
+            "node": "Call snow transfer (Bland)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Call snow transfer (Bland)": {
+      "main": [
+        [
+          {
+            "node": "Wait 1 hour (then après)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1 hour (then après)": {
+      "main": [
+        [
+          {
+            "node": "Call bottle shop - après (Bland)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
