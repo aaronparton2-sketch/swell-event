@@ -61,3 +61,7 @@ The forecast trigger uses Surfline's public `kbyg` endpoint via the free [r.jina
 ## License
 
 MIT — do what you like, no warranty. Have a mean one. 🤙
+
+---
+
+**Built by [Mycelium AI](https://www.myceliumai.com.au)**, a Perth agency that builds websites, runs Google and Meta ads, and automates the admin for small businesses. Follow the builds on Instagram at [@aaronautomates](https://www.instagram.com/aaronautomates/).
