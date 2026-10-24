@@ -34,7 +34,7 @@
     },
     {
       "parameters": {
-        "url": "https://r.jina.ai/https://services.surfline.com/kbyg/spots/forecasts/wave",
+        "url": "https://r.jina.ai/https://services.surfline.com/kbyg/spots/forecasts/surf",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -132,7 +132,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        848,
+        1008,
         368
       ],
       "id": "7f6b7312-cc68-4191-9dd6-77697b603e99"
@@ -163,7 +163,7 @@
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2,
       "position": [
-        992,
+        1152,
         368
       ],
       "id": "21483e20-e738-4128-9d49-cc1b0221004c"
@@ -183,7 +183,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1152,
+        1312,
         368
       ],
       "id": "fba3d07e-6c1e-418c-bfd6-b616e9710989"
@@ -203,7 +203,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1296,
+        1456,
         368
       ],
       "id": "a1a13905-5489-4af0-8be5-c47fc634ea6d"
@@ -216,7 +216,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1440,
+        1600,
         368
       ],
       "id": "378354d5-7e71-4b9e-aac6-1fc67a33902c"
@@ -230,7 +230,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1600,
+        1760,
         368
       ],
       "id": "0316ed9f-5913-4cdb-b1f4-0654989ea99b"
@@ -243,7 +243,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1744,
+        1904,
         368
       ],
       "id": "7f363b7c-50ba-4daa-8651-a0286f5f3863"
@@ -261,7 +261,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1904,
+        2064,
         368
       ],
       "id": "2dc334df-7cc1-40fa-9f13-de412f083f8f"
@@ -279,20 +279,20 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2048,
+        2208,
         368
       ],
       "id": "03fb3a20-eb53-4eec-ada9-6d8ae52f88c8"
     },
     {
       "parameters": {
-        "jsCode": "function load(name){const it=$(name).first().json;if(it&&it.data&&(Array.isArray(it.data.wave)||Array.isArray(it.data.wind)))return it;let raw=(typeof it==='string')?it:(typeof it.data==='string')?it.data:(typeof it.body==='string')?it.body:JSON.stringify(it);return JSON.parse(raw);}\nconst wave=load('Surfline Wave').data.wave, wind=load('Surfline Wind').data.wind;\nconst wb={}; for(const w of wind) wb[w.timestamp]=w;\nconst C=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];\nconst cd=d=>C[Math.round((d||0)/22.5)%16]; const TZ=8*3600;\nconst out=[];\nfor(const wv of wave){\n  const wd=wb[wv.timestamp]||{};\n  const prim=wv.swells.reduce((a,b)=>b.height>a.height?b:a);\n  const t=new Date((wv.timestamp+TZ)*1000);\n  const firing = wv.surf.max>=5 && wd.directionType==='Offshore';\n  out.push({json:{\n    time: t.toUTCString().slice(0,17),\n    surf: `${wv.surf.min}-${wv.surf.max}ft`,\n    swell: `${prim.height.toFixed(1)}m @ ${prim.period}s ${cd(prim.direction)}`,\n    wind: `${Math.round(wd.speed||0)}kts ${cd(wd.direction)} ${wd.directionType||''}`.trim(),\n    firing: firing ? '🔥' : '',\n    ts: wv.timestamp, surfMin: wv.surf.min, surfMax: wv.surf.max, human: wv.surf.humanRelation,\n    swH: prim.height, swP: prim.period, swD: prim.direction, swDirC: cd(prim.direction),\n    windKts: Math.round(wd.speed||0), windDir: cd(wd.direction), offshore: wd.directionType==='Offshore'\n  }});\n}\nreturn out;\n"
+        "jsCode": "function load(name){const it=$(name).first().json;if(it&&it.data&&(Array.isArray(it.data.surf)||Array.isArray(it.data.swells)||Array.isArray(it.data.wind)))return it;let raw=(typeof it==='string')?it:(typeof it.data==='string')?it.data:(typeof it.body==='string')?it.body:JSON.stringify(it);return JSON.parse(raw);}\n// Surfline retired /wave (Oct 2026): stitch /surf + /swells back into the old shape.\nconst surf=load('Surfline Wave').data.surf, swl=load('Surfline Swells').data.swells, wind=load('Surfline Wind').data.wind;\nconst sb={}; for(const s of swl) sb[s.timestamp]=(s.swells||[]).filter(x=>x.height>0);\nconst wave=surf.map(s=>({...s, swells:(sb[s.timestamp]&&sb[s.timestamp].length)?sb[s.timestamp]:[{height:0,period:0,direction:0}]}));\nconst wb={}; for(const w of wind) wb[w.timestamp]=w;\nconst C=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];\nconst cd=d=>C[Math.round((d||0)/22.5)%16]; const TZ=8*3600;\nconst out=[];\nfor(const wv of wave){\n  const wd=wb[wv.timestamp]||{};\n  const prim=wv.swells.reduce((a,b)=>b.height>a.height?b:a);\n  const t=new Date((wv.timestamp+TZ)*1000);\n  const firing = wv.surf.max>=5 && wd.directionType==='Offshore';\n  out.push({json:{\n    time: t.toUTCString().slice(0,17),\n    surf: `${wv.surf.min}-${wv.surf.max}ft`,\n    swell: `${prim.height.toFixed(1)}m @ ${prim.period}s ${cd(prim.direction)}`,\n    wind: `${Math.round(wd.speed||0)}kts ${cd(wd.direction)} ${wd.directionType||''}`.trim(),\n    firing: firing ? '🔥' : '',\n    ts: wv.timestamp, surfMin: wv.surf.min, surfMax: wv.surf.max, human: wv.surf.humanRelation,\n    swH: prim.height, swP: prim.period, swD: prim.direction, swDirC: cd(prim.direction),\n    windKts: Math.round(wd.speed||0), windDir: cd(wd.direction), offshore: wd.directionType==='Offshore'\n  }});\n}\nreturn out;\n"
       },
       "name": "Forecast",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        704,
+        864,
         368
       ],
       "id": "78413ab5-6ee6-469c-9dfd-699de5d99bc5"
@@ -323,7 +323,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3552,
+        3712,
         368
       ],
       "id": "61f7bd98-262e-461a-a693-954cd4f01217"
@@ -354,7 +354,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3840,
+        4000,
         368
       ],
       "id": "9a663ea4-5e0f-4efb-b796-a5f248cc0f82"
@@ -367,7 +367,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2192,
+        2352,
         368
       ],
       "id": "a3273acf-0d9e-4b5b-9988-0edce63190b3"
@@ -398,7 +398,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2352,
+        2512,
         368
       ],
       "id": "f572b8a0-a0ea-4aee-8ad3-74945211f8e9"
@@ -411,7 +411,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2496,
+        2656,
         368
       ],
       "id": "c5e52de5-ce83-40e9-9549-bbb91c462060"
@@ -428,7 +428,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        2944,
+        3104,
         368
       ],
       "id": "02babd52-84d2-4e09-9fb9-5111a6802f70",
@@ -442,7 +442,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3248,
+        3408,
         368
       ],
       "id": "772aca4d-8367-46c8-9272-9b1d8a982f95"
@@ -472,7 +472,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        3392,
+        3552,
         368
       ],
       "id": "24cf8815-9e0a-4fb4-b51b-bc57852f39a5"
@@ -485,7 +485,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        3696,
+        3856,
         368
       ],
       "id": "00f7e531-12fc-417f-8e3e-eccdabe1fb4d"
@@ -502,7 +502,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        2640,
+        2800,
         368
       ],
       "id": "1add21f0-0d5c-44e2-904e-abe27f4590a3"
@@ -515,7 +515,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        2800,
+        2960,
         368
       ],
       "id": "3cd1499c-d032-4ef2-a65a-dda22e071d90"
@@ -546,7 +546,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        3104,
+        3264,
         368
       ],
       "id": "d3928e64-4ebb-4905-8747-5c9bc70ab056"
@@ -578,7 +578,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1120,
+        1280,
         -320
       ],
       "id": "ccd72a77-e8b1-49dc-9205-5f61a9926ffc"
@@ -594,7 +594,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1728,
+        1888,
         -320
       ],
       "id": "55572024-d314-4405-8d55-9901a9d68e1a"
@@ -610,7 +610,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        2496,
+        2656,
         -320
       ],
       "id": "3d1ebcdb-0e68-4c4e-b342-0202b0f72f54"
@@ -626,10 +626,56 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        3248,
+        3408,
         -336
       ],
       "id": "341bd90c-07f9-429c-b7a6-05e36c6e2347"
+    },
+    {
+      "parameters": {
+        "url": "https://r.jina.ai/https://services.surfline.com/kbyg/spots/forecasts/swells",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "spotId",
+              "value": "5842041f4e65fad6a7708b4b"
+            },
+            {
+              "name": "days",
+              "value": "3"
+            },
+            {
+              "name": "intervalHours",
+              "value": "6"
+            },
+            {
+              "name": "units[swellHeight]",
+              "value": "M"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Return-Format",
+              "value": "text"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Surfline Swells",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        704,
+        368
+      ],
+      "id": "cdb55696-9082-4bbd-86e7-a0b7cadd2a42"
     }
   ],
   "connections": {
@@ -670,7 +716,7 @@
       "main": [
         [
           {
-            "node": "Forecast",
+            "node": "Surfline Swells",
             "type": "main",
             "index": 0
           }
@@ -933,6 +979,17 @@
         [
           {
             "node": "Wait 1h (poll inbox)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Surfline Swells": {
+      "main": [
+        [
+          {
+            "node": "Forecast",
             "type": "main",
             "index": 0
           }

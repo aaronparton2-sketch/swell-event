@@ -50,7 +50,7 @@ every 6h ─► Surfline forecast (swell · period · wind)
 | `YOUR-INSTANCE.app.n8n.cloud` | your n8n instance URL (for the Bland call-back webhook) | — |
 | `+YOUR_PHONE` | the number Bland dials for the taxi | — |
 
-The forecast trigger uses Surfline's public `kbyg` endpoint via the free [r.jina.ai](https://r.jina.ai) relay — no login, no key. Swap the spot in the two "Surfline" nodes for your break.
+The forecast trigger uses Surfline's public `kbyg` endpoint via the free [r.jina.ai](https://r.jina.ai) relay — no login, no key. Swap the spot in the three "Surfline" nodes for your break. (Updated Oct 2026: Surfline retired its old `/wave` feed, so this now reads `/surf` + `/swells`.)
 
 ## Safety rails (please read)
 
